@@ -13,14 +13,11 @@ def fetch_data(db_manager: DatabaseManager) -> pd.DataFrame:
     Returns processed DataFrame.
     """
     try:
-        # Get data from database manager
+        # Get data from database manager 
         data = db_manager.get_all_products()
         
         # Convert to DataFrame
         df = pd.DataFrame(data)
-        
-        # No need for column renaming since DatabaseManager already returns
-        # properly named columns in get_all_products()
         
         return df
     except Exception as e:
@@ -40,128 +37,108 @@ def run_application(db_manager: DatabaseManager) -> None:
         df = fetch_data(db_manager)
         initial_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        app.layout = dbc.Container(
-            [
-                # Store components should be at the top level of the layout
-                dcc.Store(id='last-update-store', data=initial_time),
-                
-                dbc.Row([
-                    dbc.Col(
-                        html.H1(
-                            "Product Data",
-                            className="text-center text-light my-4"
-                        ),
-                        width=9
+        app.layout = dbc.Container([
+            # Store components
+            dcc.Store(id='last-update-store', data=initial_time),
+            dcc.Interval(id='interval-component', interval=300000), # 5 minute refresh
+            
+            dbc.Row([
+                dbc.Col(
+                    html.H1("Product Data", className="text-center text-light my-4"),
+                    width=9
+                ),
+                dbc.Col(
+                    dbc.Button(
+                        ["Refresh Data ", html.I(className="fas fa-sync-alt")],
+                        id="refresh-button",
+                        color="danger", 
+                        className="mt-4"
                     ),
-                    dbc.Col(
-                        dbc.Button(
-                            [
-                                "Refresh Data ",
-                                html.I(className="fas fa-sync-alt")
-                            ],
-                            id="refresh-button",
-                            color="primary",
-                            className="mt-4"
-                        ),
-                        width=3
-                    )
-                ]),
-                dbc.Row([
-                    dbc.Col(
-                        html.Div(
-                            id="last-update-time",
-                            className="text-light mb-3"
-                        )
-                    )
-                ]),
-                dbc.Row(
-                    dbc.Col(
-                        dash_table.DataTable(
-                            id='table',
-                            columns=[
-                                {"name": i, "id": i, "presentation": "markdown"} if i == "URL"
-                                else {"name": i, "id": i} 
-                                for i in df.columns
-                            ],
-                            data=[
-                                {
-                                    **record,
-                                    'URL': f'[Link]({record["URL"]})'
-                                }
-                                for record in df.to_dict('records')
-                            ],
-                            markdown_options={"html": True},
-                            page_size=10,
-                            style_table={'overflowX': 'auto'},
-                            style_cell={
-                                'textAlign': 'left',
-                                'backgroundColor': 'rgb(50, 50, 50)',
-                                'color': 'white',
-                                'minWidth': '180px', 
-                                'width': '180px', 
-                                'maxWidth': '180px',
-                                'whiteSpace': 'normal'
-                            },
-                            style_cell_conditional=[
-                                {
-                                    'if': {'column_id': 'URL'},
-                                    'cursor': 'pointer',
-                                    'textDecoration': 'underline',
-                                    'color': '#7FDBFF'
-                                }
-                            ],
-                            style_header={
-                                'backgroundColor': 'rgb(30, 30, 30)',
-                                'color': 'white',
-                                'fontWeight': 'bold'
-                            },
-                        ),
-                        width=12
-                    )
-                ),
-                dcc.Loading(
-                    id="loading",
-                    type="default",
-                    children=html.Div(id="loading-output")
-                ),
-            ],
-            fluid=True,
-            className="bg-dark text-light"
-        )
+                    width=3
+                )
+            ]),
+
+            dbc.Row([
+                dbc.Col(
+                    html.Div(id="last-update-time", className="text-light mb-3")
+                )
+            ]),
+
+            dbc.Row([
+                dbc.Col(
+                    id='table-container',
+                    width=12
+                )
+            ]),
+
+            dcc.Loading(
+                id="loading",
+                type="default",
+                children=html.Div(id="loading-output")
+            ),
+
+            html.Div(id="error-message", className="text-danger")
+        ],
+        fluid=True,
+        className="bg-dark text-light")
 
         @app.callback(
-            [Output('table', 'data'),
+            [Output('table-container', 'children'),
              Output('last-update-store', 'data'),
-             Output('loading-output', 'children')],
-            [Input('refresh-button', 'n_clicks')],
+             Output('loading-output', 'children'),
+             Output('error-message', 'children')],
+            [Input('refresh-button', 'n_clicks'),
+             Input('interval-component', 'n_intervals')],
             prevent_initial_call=True
         )
-        def refresh_data(n_clicks):
+        def refresh_data(n_clicks, n_intervals):
             """
-            Callback to refresh the data when the refresh button is clicked
+            Callback to refresh the data when the refresh button is clicked or interval triggers
             """
-            if n_clicks is None:
-                raise dash.exceptions.PreventUpdate
-                
             try:
                 df = fetch_data(db_manager)
                 if df.empty:
                     logging.warning("No data found in database")
-                    return [], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "No data available"
-                     
+                    return None, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), None, "No data available"
+                
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                # Transform the URL into markdown links
-                data = [
-                    {
-                        **record,
-                        'URL': f'[Link]({record["URL"]})'
+                
+                # Create table
+                table = dbc.Table(
+                    # Create header
+                    [html.Thead(html.Tr([html.Th(col) for col in df.columns]))]+
+                    # Create body with URL links
+                    [html.Tbody([
+                        html.Tr([
+                            html.Td(
+                                html.A(
+                                    "Link",
+                                    href=row["URL"],
+                                    className="text-info text-decoration-underline"
+                                ) if col == "URL"
+                                else row[col]
+                            )
+                            for col in df.columns
+                        ])
+                        for row in df.to_dict('records')
+                    ])],
+                    dark=True,
+                    bordered=True,
+                    hover=True,
+                    responsive=True,
+                    striped=True,
+                    className="text-light",
+                    style={
+                        'backgroundColor': 'rgb(50, 50, 50)',
+                        'minWidth': '180px'
                     }
-                    for record in df.to_dict('records')
-                ]
-                return data, current_time, ""
+                )
+                
+                return table, current_time, None, None
+                
             except Exception as e:
                 logging.error(f"Error refreshing data: {e}")
-                return dash.no_update, dash.no_update, f"Error refreshing data: {str(e)}"
+                return dash.no_update, dash.no_update, None, f"Error refreshing data: {str(e)}"
 
         @app.callback(
             Output('last-update-time', 'children'),
@@ -175,8 +152,9 @@ def run_application(db_manager: DatabaseManager) -> None:
                 return f"Last updated: {timestamp}"
             return "Last updated: Never"
 
-        app.run(host='0.0.0.0', port='8080', debug=True)
+        app.run(host='0.0.0.0', port='8080')
         logging.info("Dash application started.")
+        
     except Exception as e:
         logging.error(f"Error starting the application: {e}")
         raise
