@@ -53,8 +53,7 @@ dash_cache/
 .env.local
 
 # Randoms
-product_data.db
 cloudflare.conf
 *.crt
 *.key
-product_data.db
+scraper/db_manager_v2.py
